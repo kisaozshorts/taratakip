@@ -44,17 +44,23 @@ export default function ShipperTabs({
   companies: Company[]
   updateShippingStatus: (formData: FormData) => Promise<any>
 }) {
-  const [activeTab, setActiveTab] = useState<'known' | 'unknown'>('known')
+  const [activeTab, setActiveTab] = useState<'known' | 'unknown' | 'shipped'>('known')
 
-  const knownOrders = orders.filter((o) => o.is_known_customer)
-  const unknownOrders = orders.filter((o) => !o.is_known_customer)
+  const pendingKnown = orders.filter((o) => o.is_known_customer && !o.cargo_sent)
+  const pendingUnknown = orders.filter((o) => !o.is_known_customer && !o.cargo_sent)
+  const shippedOrders = orders.filter((o) => o.cargo_sent)
 
-  const activeOrders = activeTab === 'known' ? knownOrders : unknownOrders
+  const activeOrders =
+    activeTab === 'known'
+      ? pendingKnown
+      : activeTab === 'unknown'
+      ? pendingUnknown
+      : shippedOrders
 
   return (
     <div>
       {/* Sekme Butonları */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
         <button
           onClick={() => setActiveTab('known')}
           className={`btn ${activeTab === 'known' ? 'btn-primary' : 'btn-secondary'}`}
@@ -62,7 +68,7 @@ export default function ShipperTabs({
         >
           <span>👥 Bilinen Müşteriler</span>
           <span style={{ background: 'rgba(255,255,255,0.15)', padding: '0.1rem 0.4rem', borderRadius: '10px', fontSize: '0.75rem' }}>
-            {knownOrders.length}
+            {pendingKnown.length}
           </span>
         </button>
 
@@ -73,10 +79,34 @@ export default function ShipperTabs({
         >
           <span>👤 Bilinmeyen Müşteriler</span>
           <span style={{ background: 'rgba(255,255,255,0.15)', padding: '0.1rem 0.4rem', borderRadius: '10px', fontSize: '0.75rem' }}>
-            {unknownOrders.length}
+            {pendingUnknown.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('shipped')}
+          className={`btn ${activeTab === 'shipped' ? 'btn-primary' : 'btn-secondary'}`}
+          style={{ padding: '0.65rem 1.25rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+        >
+          <span>🚚 Gönderilmiş Siparişler</span>
+          <span style={{ background: 'rgba(255,255,255,0.15)', padding: '0.1rem 0.4rem', borderRadius: '10px', fontSize: '0.75rem' }}>
+            {shippedOrders.length}
           </span>
         </button>
       </div>
+
+      {/* Gönderilen Siparişler Özeti */}
+      {activeTab === 'shipped' && (
+        <div className="glass-card" style={{ marginBottom: '1.5rem', padding: '1rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', borderLeft: '4px solid var(--success)' }}>
+          <div style={{ background: 'rgba(16, 185, 129, 0.1)', padding: '0.75rem', borderRadius: '50%', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Truck size={24} />
+          </div>
+          <div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Toplam Gönderilen Sipariş Sayısı</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#ffffff' }}>{shippedOrders.length} adet</div>
+          </div>
+        </div>
+      )}
 
       {/* Kart Listesi */}
       {activeOrders.length > 0 ? (
@@ -199,6 +229,16 @@ export default function ShipperTabs({
                         placeholder="Örn: YK-123456789"
                         defaultValue={order.cargo_code || ''}
                         style={{ height: '38px', padding: '0.5rem 0.75rem' }}
+                        onChange={(e) => {
+                          const selectEl = document.getElementById(`cargo_sent_${order.id}`) as HTMLSelectElement;
+                          if (selectEl) {
+                            if (e.target.value.trim().length > 0) {
+                              selectEl.value = 'true';
+                            } else {
+                              selectEl.value = 'false';
+                            }
+                          }
+                        }}
                       />
                     </div>
 
@@ -220,7 +260,7 @@ export default function ShipperTabs({
 
                     <button type="submit" className="btn btn-primary w-full" style={{ height: '38px', padding: '0.5rem' }}>
                       <Check size={16} />
-                      <span>Bilgileri Güncelle</span>
+                      <span>{order.cargo_sent ? 'Gönderiyi Güncelle' : 'Kargoya Ver'}</span>
                     </button>
                   </form>
                 </div>
@@ -231,7 +271,11 @@ export default function ShipperTabs({
       ) : (
         <div style={{ textAlign: 'center', padding: '5rem 0', color: 'var(--text-muted)' }}>
           <PackageOpen size={48} style={{ margin: '0 auto 1rem auto', opacity: 0.5 }} />
-          <p>Bu sekmede kargo bekleyen sipariş bulunmuyor.</p>
+          <p>
+            {activeTab === 'shipped'
+              ? 'Henüz gönderilmiş bir sipariş bulunmuyor.'
+              : 'Bu sekmede kargo bekleyen sipariş bulunmuyor.'}
+          </p>
         </div>
       )}
     </div>
