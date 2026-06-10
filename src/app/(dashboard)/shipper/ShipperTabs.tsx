@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Check, PackageOpen, Calendar, MapPin, Tag, User, Phone, ShoppingCart } from 'lucide-react'
+import { Check, PackageOpen, Calendar, MapPin, Tag, User, Phone, ShoppingCart, Truck } from 'lucide-react'
 
 interface OrderItem {
   id: string
@@ -21,6 +21,7 @@ interface Order {
   phone_number: string
   cargo_sent: boolean
   cargo_code: string | null
+  shipping_company_id: string | null
   created_at: string
   is_known_customer: boolean
   profiles: {
@@ -29,11 +30,18 @@ interface Order {
   order_items: OrderItem[]
 }
 
+interface Company {
+  id: string
+  name: string
+}
+
 export default function ShipperTabs({
   orders,
+  companies,
   updateShippingStatus
 }: {
   orders: Order[]
+  companies: Company[]
   updateShippingStatus: (formData: FormData) => Promise<any>
 }) {
   const [activeTab, setActiveTab] = useState<'known' | 'unknown'>('known')
@@ -156,6 +164,28 @@ export default function ShipperTabs({
                 <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1.25rem' }}>
                   <form action={updateShippingStatus} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     <input type="hidden" name="id" value={order.id} />
+
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label" htmlFor={`shipping_company_id_${order.id}`} style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <Truck size={14} />
+                        <span>Kargo Firması</span>
+                      </label>
+                      <select
+                        name="shipping_company_id"
+                        id={`shipping_company_id_${order.id}`}
+                        className="form-input"
+                        defaultValue={order.shipping_company_id || ''}
+                        style={{ height: '38px', padding: '0.5rem 0.75rem' }}
+                        required
+                      >
+                        <option value="" disabled>Kargo Firması Seçin</option>
+                        {companies.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
                     <div className="form-group" style={{ marginBottom: 0 }}>
                       <label className="form-label" htmlFor={`cargo_code_${order.id}`} style={{ fontSize: '0.75rem' }}>

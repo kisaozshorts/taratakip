@@ -25,18 +25,29 @@ export default async function ShipperDashboardContent() {
     redirect('/')
   }
 
-  // Sadece ödemesi iletilmiş VE admin tarafından onaylanmış siparişleri getirelim (sepet kalemleriyle birlikte)
-  const { data: orders } = await supabase
-    .from('orders')
-    .select('*, order_items(*, species:species_id(name)), profiles:dealer_id(username)')
-    .eq('payment_completed', true)
-    .eq('admin_approved', true)
-    .order('cargo_sent', { ascending: true }) // Kargo bekleyenler üstte gözüksün
-    .order('created_at', { ascending: false })
+  // Ödemesi yapılmış ve onaylanmış siparişleri ve kullanılabilir kargo firmalarını çekelim
+  const [ordersRes, companiesRes] = await Promise.all([
+    supabase.from('orders')
+      .select('*, order_items(*, species:species_id(name)), profiles:dealer_id(username)')
+      .eq('payment_completed', true)
+      .eq('admin_approved', true)
+      .order('cargo_sent', { ascending: true })
+      .order('created_at', { ascending: false }),
+    supabase.from('shipping_companies')
+      .select('*')
+      .order('name', { ascending: true })
+  ])
+
+  const orders = ordersRes.data || []
+  const companies = companiesRes.data || []
 
   return (
     <div>
-      <ShipperTabs orders={(orders || []) as any} updateShippingStatus={updateShippingStatus} />
+      <ShipperTabs
+        orders={orders as any}
+        companies={companies}
+        updateShippingStatus={updateShippingStatus}
+      />
     </div>
   )
 }

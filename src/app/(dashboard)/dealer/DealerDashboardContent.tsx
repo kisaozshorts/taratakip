@@ -20,7 +20,7 @@ export default async function DealerDashboardContent() {
   const [profileRes, ordersRes] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).single(),
     supabase.from('orders')
-      .select('*, order_items(*, species:species_id(name))')
+      .select('*, order_items(*, species:species_id(name)), shipping_companies:shipping_company_id(name)')
       .eq('dealer_id', user.id)
       .order('created_at', { ascending: false })
   ])
@@ -246,9 +246,14 @@ export default async function DealerDashboardContent() {
                             {order.cargo_sent ? 'Gönderildi' : 'Kargoya Verilmedi'}
                           </span>
                           {order.cargo_code && (
-                            <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600 }}>
-                              Kod: {order.cargo_code}
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', marginTop: '0.2rem' }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>
+                                {(order as any).shipping_companies?.name || '-'}
+                              </span>
+                              <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600 }}>
+                                Kod: {order.cargo_code}
+                              </span>
+                            </div>
                           )}
                         </div>
                       </td>

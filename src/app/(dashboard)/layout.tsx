@@ -58,6 +58,12 @@ export default async function DashboardLayout({ children }: LayoutProps) {
               </Link>
             </li>
             <li>
+              <Link href="/admin/shipping" className="sidebar-link">
+                <Truck size={18} />
+                <span>Kargo Firmaları Yönetimi</span>
+              </Link>
+            </li>
+            <li>
               <Link href="/admin/users" className="sidebar-link">
                 <Users size={18} />
                 <span>Bayi & Rol Yönetimi</span>

@@ -7,6 +7,7 @@ export async function updateShippingStatus(formData: FormData) {
   const id = formData.get('id') as string
   const cargo_sent = formData.get('cargo_sent') === 'true'
   const cargo_code = formData.get('cargo_code') as string
+  const shipping_company_id = formData.get('shipping_company_id') as string
 
   if (!id) return
 
@@ -32,6 +33,7 @@ export async function updateShippingStatus(formData: FormData) {
     .update({
       cargo_sent,
       cargo_code: cargo_code.trim() || null,
+      shipping_company_id: shipping_company_id || null,
     })
     .eq('id', id)
 

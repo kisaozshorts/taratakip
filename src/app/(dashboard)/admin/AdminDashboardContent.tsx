@@ -43,7 +43,7 @@ export default async function AdminDashboardContent({
   // Filtrelenmiş Sipariş Sorgusunu hazırlayalım (Supabase JOIN ile kalemleri çekiyoruz)
   let query = supabase
     .from('orders')
-    .select('*, order_items(*, species:species_id(name)), profiles:dealer_id(username)')
+    .select('*, order_items(*, species:species_id(name)), profiles:dealer_id(username), shipping_companies:shipping_company_id(name)')
     .order('created_at', { ascending: false })
 
   if (p.dealer) query = query.eq('dealer_id', p.dealer)
@@ -395,9 +395,14 @@ export default async function AdminDashboardContent({
                             {order.cargo_sent ? 'Gönderildi' : 'Kargoya Verilmedi'}
                           </span>
                           {order.cargo_code && (
-                            <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600 }}>
-                              {order.cargo_code}
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', marginTop: '0.2rem' }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>
+                                {(order as any).shipping_companies?.name || '-'}
+                              </span>
+                              <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600 }}>
+                                {order.cargo_code}
+                              </span>
+                            </div>
                           )}
                         </div>
                       </td>
