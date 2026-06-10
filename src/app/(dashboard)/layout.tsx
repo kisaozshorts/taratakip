@@ -1,4 +1,6 @@
 import React from 'react'
+export const unstable_instant = false
+
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/server'
