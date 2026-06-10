@@ -5,26 +5,48 @@ import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { Logger } from '@/utils/logger'
 
+interface CartItem {
+  speciesId: string
+  quantity: number
+}
+
 export async function createOrder(prevState: any, formData: FormData) {
   const receiver_name = formData.get('receiver_name') as string
   const city = formData.get('city') as string
   const district = formData.get('district') as string
   const cargo_branch = formData.get('cargo_branch') as string
-  const species_id = formData.get('species_id') as string
+  const phone_number = formData.get('phone_number') as string
+  const is_known_customer_form = formData.get('is_known_customer') === 'true'
   const payment_completed = formData.get('payment_completed') === 'true'
+  const itemsStr = formData.get('items') as string
 
-  Logger.info('Yeni sipariş oluşturma isteği alındı.', {
+  Logger.info('Yeni sipariş oluşturma isteği alındı (sepetli).', {
     receiver_name,
     city,
     district,
     cargo_branch,
-    species_id,
+    phone_number,
+    is_known_customer_form,
     payment_completed,
+    itemsStrLength: itemsStr?.length
   })
 
-  if (!receiver_name || !city || !district || !cargo_branch || !species_id) {
+  if (!receiver_name || !city || !district || !cargo_branch || !phone_number || !itemsStr) {
     Logger.warn('Sipariş oluşturma başarısız: Eksik alanlar var.')
-    return { error: 'Lütfen tüm alanları doldurun.' }
+    return { error: 'Lütfen tüm alanları doldurun ve sepete en az bir ürün ekleyin.' }
+  }
+
+  let items: CartItem[] = []
+  try {
+    items = JSON.parse(itemsStr)
+  } catch (e) {
+    Logger.error('Sepet verisi JSON ayrıştırılırken hata:', e)
+    return { error: 'Sepet verisi geçersiz.' }
+  }
+
+  if (items.length === 0) {
+    Logger.warn('Sipariş oluşturma başarısız: Sepet boş.')
+    return { error: 'Lütfen sepete en az bir ürün ekleyin.' }
   }
 
   const supabase = await createClient()
@@ -37,38 +59,85 @@ export async function createOrder(prevState: any, formData: FormData) {
     redirect('/login')
   }
 
-  Logger.info(`Tür fiyat bilgisi veritabanından çekiliyor. Tür ID: ${species_id}`)
-  const { data: species, error: speciesError } = await supabase
-    .from('species')
-    .select('price')
-    .eq('id', species_id)
+  // Bayinin profilini ve is_unknown_dealer durumunu kontrol et
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('is_unknown_dealer')
+    .eq('id', user.id)
     .single()
 
-  if (speciesError || !species) {
-    Logger.error('Sipariş oluşturma başarısız: Tarantula türü fiyatı alınamadı.', speciesError)
-    return { error: 'Seçilen tarantula türü sistemde bulunamadı.' }
+  if (profileError || !profile) {
+    Logger.error('Sipariş oluşturma başarısız: Bayi profil bilgisi alınamadı.', profileError)
+    return { error: 'Profil doğrulanamadı.' }
   }
 
-  Logger.info(`Fiyat kilitlendi. Satış Anındaki Fiyat: ${species.price} TL. Sipariş kaydediliyor...`)
+  // Eğer bayi "bilinmeyen" olarak işaretlenmişse, sipariş kesinlikle bilinmeyen müşteri olmalıdır.
+  const is_known_customer = profile.is_unknown_dealer ? false : is_known_customer_form
 
   // Siparişi veritabanına ekle
-  const { error: insertError } = await supabase.from('orders').insert({
-    receiver_name: receiver_name.trim(),
-    city: city.trim(),
-    district: district.trim(),
-    cargo_branch: cargo_branch.trim(),
-    species_id,
-    price_at_sale: species.price,
-    payment_completed,
-    dealer_id: user.id,
-  })
+  Logger.info('Sipariş üst kaydı oluşturuluyor...')
+  const { data: newOrder, error: insertError } = await supabase
+    .from('orders')
+    .insert({
+      receiver_name: receiver_name.trim(),
+      city: city.trim(),
+      district: district.trim(),
+      cargo_branch: cargo_branch.trim(),
+      phone_number: phone_number.trim(),
+      is_known_customer,
+      payment_completed,
+      admin_approved: false, // İlk eklemede her zaman onay bekler
+      dealer_id: user.id,
+    })
+    .select('id')
+    .single()
 
-  if (insertError) {
+  if (insertError || !newOrder) {
     Logger.error('Sipariş veritabanına kaydedilirken hata oluştu:', insertError)
-    return { error: 'Sipariş oluşturulurken hata oluştu: ' + insertError.message }
+    return { error: 'Sipariş oluşturulurken hata oluştu: ' + (insertError?.message || 'Sipariş kaydı alınamadı') }
   }
 
-  Logger.info(`Sipariş başarıyla oluşturuldu! Bayi: ${user.email}, Alıcı: ${receiver_name}`)
+  Logger.info(`Sipariş üst kaydı oluşturuldu. ID: ${newOrder.id}. Sepet kalemleri ekleniyor...`)
+
+  // Sepetteki tarantula türlerinin fiyatlarını tek seferde çekelim
+  const speciesIds = items.map((i) => i.speciesId)
+  const { data: speciesList, error: speciesError } = await supabase
+    .from('species')
+    .select('id, price')
+    .in('id', speciesIds)
+
+  if (speciesError || !speciesList) {
+    Logger.error('Sepet kalemleri eklenirken tür fiyatları alınamadı:', speciesError)
+    // Üst kaydı geri silelim (rollback)
+    await supabase.from('orders').delete().eq('id', newOrder.id)
+    return { error: 'Tarantula tür bilgileri doğrulanamadı.' }
+  }
+
+  const speciesMap = new Map(speciesList.map((s) => [s.id, Number(s.price)]))
+
+  // Kalemleri insert edelim
+  const orderItemsData = items.map((item) => {
+    const price = speciesMap.get(item.speciesId) || 0
+    return {
+      order_id: newOrder.id,
+      species_id: item.speciesId,
+      quantity: item.quantity,
+      price_at_sale: price
+    }
+  })
+
+  const { error: itemsInsertError } = await supabase
+    .from('order_items')
+    .insert(orderItemsData)
+
+  if (itemsInsertError) {
+    Logger.error('Sipariş kalemleri kaydedilirken hata oluştu:', itemsInsertError)
+    // Üst kaydı silerek temizlik yapalım
+    await supabase.from('orders').delete().eq('id', newOrder.id)
+    return { error: 'Sipariş kalemleri oluşturulamadı: ' + itemsInsertError.message }
+  }
+
+  Logger.info(`Sipariş ve tüm kalemleri başarıyla oluşturuldu! Bayi: ${user.email}, Alıcı: ${receiver_name}`)
   revalidatePath('/dealer')
   redirect('/dealer')
 }
@@ -79,19 +148,35 @@ export async function updateOrder(prevState: any, formData: FormData) {
   const city = formData.get('city') as string
   const district = formData.get('district') as string
   const cargo_branch = formData.get('cargo_branch') as string
-  const species_id = formData.get('species_id') as string
+  const phone_number = formData.get('phone_number') as string
+  const is_known_customer_form = formData.get('is_known_customer') === 'true'
+  const itemsStr = formData.get('items') as string
 
   Logger.info(`Sipariş güncelleme isteği alındı. Sipariş ID: ${id}`, {
     receiver_name,
     city,
     district,
     cargo_branch,
-    species_id,
+    phone_number,
+    is_known_customer_form,
+    itemsStrLength: itemsStr?.length
   })
 
-  if (!id || !receiver_name || !city || !district || !cargo_branch || !species_id) {
+  if (!id || !receiver_name || !city || !district || !cargo_branch || !phone_number || !itemsStr) {
     Logger.warn('Sipariş güncelleme başarısız: Eksik alanlar var.')
     return { error: 'Lütfen tüm alanları doldurun.' }
+  }
+
+  let items: CartItem[] = []
+  try {
+    items = JSON.parse(itemsStr)
+  } catch (e) {
+    Logger.error('Sepet verisi ayrıştırılamadı:', e)
+    return { error: 'Sepet verisi geçersiz.' }
+  }
+
+  if (items.length === 0) {
+    return { error: 'Siparişte en az bir ürün bulunmalıdır.' }
   }
 
   const supabase = await createClient()
@@ -104,8 +189,7 @@ export async function updateOrder(prevState: any, formData: FormData) {
     redirect('/login')
   }
 
-  // Siparişin varlığını ve kargo durumunu kontrol et
-  Logger.info(`Güncellenecek siparişin sahipliği ve kargo durumu kontrol ediliyor. Sipariş ID: ${id}`)
+  // Siparişin varlığını, sahipliğini ve kargo durumunu kontrol et
   const { data: order, error: fetchError } = await supabase
     .from('orders')
     .select('dealer_id, cargo_sent')
@@ -118,7 +202,7 @@ export async function updateOrder(prevState: any, formData: FormData) {
   }
 
   if (order.dealer_id !== user.id) {
-    Logger.warn(`Sipariş güncelleme engellendi: Yetkisiz erişim denemesi! Kullanıcı: ${user.email}, Sipariş Sahibi ID: ${order.dealer_id}`)
+    Logger.warn(`Sipariş güncelleme engellendi: Yetkisiz erişim denemesi! Kullanıcı: ${user.email}`)
     return { error: 'Bu siparişi düzenleme yetkiniz yok.' }
   }
 
@@ -127,22 +211,16 @@ export async function updateOrder(prevState: any, formData: FormData) {
     return { error: 'Kargoya verilmiş siparişler düzenlenemez.' }
   }
 
-  // Seçilen türün fiyatını alıp satış anındaki fiyatı da güncelleyelim
-  Logger.info(`Güncellenen tarantula türü fiyatı alınıyor. Tür ID: ${species_id}`)
-  const { data: species, error: speciesError } = await supabase
-    .from('species')
-    .select('price')
-    .eq('id', species_id)
+  // Bayinin profilini kontrol et
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('is_unknown_dealer')
+    .eq('id', user.id)
     .single()
 
-  if (speciesError || !species) {
-    Logger.error('Sipariş güncelleme başarısız: Tarantula tür fiyatı alınamadı.', speciesError)
-    return { error: 'Seçilen tarantula türü sistemde bulunamadı.' }
-  }
+  const is_known_customer = profile?.is_unknown_dealer ? false : is_known_customer_form
 
-  Logger.info(`Güncelleme kaydediliyor. Yeni Satış Fiyatı: ${species.price} TL`)
-
-  // Güncelleme işlemi
+  // Sipariş üst kaydını güncelle
   const { error: updateError } = await supabase
     .from('orders')
     .update({
@@ -150,14 +228,50 @@ export async function updateOrder(prevState: any, formData: FormData) {
       city: city.trim(),
       district: district.trim(),
       cargo_branch: cargo_branch.trim(),
-      species_id,
-      price_at_sale: species.price,
+      phone_number: phone_number.trim(),
+      is_known_customer,
     })
     .eq('id', id)
 
   if (updateError) {
-    Logger.error('Sipariş veritabanında güncellenirken hata oluştu:', updateError)
+    Logger.error('Sipariş üst kaydı güncellenirken hata oluştu:', updateError)
     return { error: 'Sipariş güncellenirken hata oluştu: ' + updateError.message }
+  }
+
+  // Eski kalemleri silip yenilerini ekleyelim
+  Logger.info(`Eski sipariş kalemleri siliniyor. Sipariş ID: ${id}`)
+  await supabase.from('order_items').delete().eq('order_id', id)
+
+  // Yeni kalemlerin fiyatlarını çekelim
+  const speciesIds = items.map((i) => i.speciesId)
+  const { data: speciesList, error: speciesError } = await supabase
+    .from('species')
+    .select('id, price')
+    .in('id', speciesIds)
+
+  if (speciesError || !speciesList) {
+    Logger.error('Sipariş kalemleri güncellenirken tarantula fiyatları alınamadı:', speciesError)
+    return { error: 'Tarantula fiyatları doğrulanamadı.' }
+  }
+
+  const speciesMap = new Map(speciesList.map((s) => [s.id, Number(s.price)]))
+  const orderItemsData = items.map((item) => {
+    const price = speciesMap.get(item.speciesId) || 0
+    return {
+      order_id: id,
+      species_id: item.speciesId,
+      quantity: item.quantity,
+      price_at_sale: price
+    }
+  })
+
+  const { error: itemsInsertError } = await supabase
+    .from('order_items')
+    .insert(orderItemsData)
+
+  if (itemsInsertError) {
+    Logger.error('Sipariş yeni kalemleri kaydedilirken hata oluştu:', itemsInsertError)
+    return { error: 'Sipariş güncellendi ancak kalemler güncellenirken hata oluştu: ' + itemsInsertError.message }
   }
 
   Logger.info(`Sipariş başarıyla güncellendi! ID: ${id}`)

@@ -19,22 +19,28 @@ export default async function EditOrderPage({
   }
 
   // Bayi kontrolü
-  const { data: profile } = await supabase
+  const { data: profileCheck } = await supabase
     .from('profiles')
     .select('role')
     .eq('id', user.id)
     .single()
 
-  if (profile?.role !== 'dealer') {
+  if (profileCheck?.role !== 'dealer') {
     redirect('/')
   }
 
-  // Siparişi veritabanından çekelim
-  const { data: order } = await supabase
-    .from('orders')
-    .select('*')
-    .eq('id', id)
-    .single()
+  // Sipariş, kalemler, profil ve türleri paralel çekelim (Performans!)
+  const [orderRes, orderItemsRes, profileRes, speciesListRes] = await Promise.all([
+    supabase.from('orders').select('*').eq('id', id).single(),
+    supabase.from('order_items').select('*, species:species_id(name)').eq('order_id', id),
+    supabase.from('profiles').select('role, is_unknown_dealer').eq('id', user.id).single(),
+    supabase.from('species').select('id, name, price').order('name', { ascending: true })
+  ])
+
+  const order = orderRes.data
+  const orderItems = orderItemsRes.data
+  const profile = profileRes.data
+  const speciesList = speciesListRes.data
 
   if (!order || order.dealer_id !== user.id) {
     redirect('/dealer')
@@ -59,12 +65,6 @@ export default async function EditOrderPage({
     )
   }
 
-  // Tarantula türlerini çekelim
-  const { data: speciesList } = await supabase
-    .from('species')
-    .select('id, name, price')
-    .order('name', { ascending: true })
-
   return (
     <div style={{ maxWidth: '600px', margin: '0 auto' }}>
       <div className="page-header">
@@ -72,7 +72,12 @@ export default async function EditOrderPage({
       </div>
 
       <div className="glass-card" style={{ padding: '2.5rem' }}>
-        <EditOrderForm order={order} speciesList={speciesList || []} />
+        <EditOrderForm
+          order={order}
+          orderItems={orderItems || []}
+          speciesList={speciesList || []}
+          isUnknownDealer={profile?.is_unknown_dealer || false}
+        />
       </div>
     </div>
   )

@@ -1,7 +1,7 @@
 import React from 'react'
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
-import { DollarSign, ShoppingBag, CreditCard, Truck, Trash2, Filter, RefreshCw } from 'lucide-react'
+import { DollarSign, ShoppingBag, CreditCard, Truck, Filter, Check, RefreshCw, Phone, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { revalidatePath } from 'next/cache'
 import DeleteButton from '@/components/DeleteButton'
 import { Logger } from '@/utils/logger'
@@ -40,58 +40,58 @@ export default async function AdminDashboardContent({
 
   const p = await searchParams
 
-  // Filtre seçenekleri için bayileri ve türleri çekelim
-  const { data: dealers } = await supabase
-    .from('profiles')
-    .select('id, username')
-    .eq('role', 'dealer')
-
-  const { data: speciesList } = await supabase
-    .from('species')
-    .select('id, name')
-
-  // Hesaplamalar için filtresiz tüm siparişleri çekelim
-  const { data: allOrders } = await supabase
-    .from('orders')
-    .select('price_at_sale, payment_completed, cargo_sent')
-
-  // Filtrelenmiş Sipariş Sorgusunu hazırlayalım (henüz await etmiyoruz)
+  // Filtrelenmiş Sipariş Sorgusunu hazırlayalım (Supabase JOIN ile kalemleri çekiyoruz)
   let query = supabase
     .from('orders')
-    .select('*, species:species_id(name), profiles:dealer_id(username)')
+    .select('*, order_items(*, species:species_id(name)), profiles:dealer_id(username)')
     .order('created_at', { ascending: false })
 
   if (p.dealer) query = query.eq('dealer_id', p.dealer)
-  if (p.species) query = query.eq('species_id', p.species)
   if (p.payment) query = query.eq('payment_completed', p.payment === 'true')
   if (p.cargo) query = query.eq('cargo_sent', p.cargo === 'true')
 
-  // Tüm veritabanı sorgularını PARALEL çalıştıralım (Mükemmel performans artışı!)
+  // Tüm veritabanı sorgularını PARALEL çalıştıralım
   Logger.info('Admin paneli veritabanı sorguları paralel olarak başlatılıyor...')
   const [dealersRes, speciesListRes, allOrdersRes, ordersRes] = await Promise.all([
     supabase.from('profiles').select('id, username').eq('role', 'dealer'),
     supabase.from('species').select('id, name'),
-    supabase.from('orders').select('price_at_sale, payment_completed, cargo_sent'),
+    supabase.from('orders').select('*, order_items(*)'),
     query
   ])
 
   const dealersData = dealersRes.data || []
   const speciesListData = speciesListRes.data || []
   const allOrdersData = allOrdersRes.data || []
-  const ordersData = ordersRes.data || []
+  let ordersData = ordersRes.data || []
 
   Logger.info('Tüm paralel sorgular tamamlandı.')
 
+  // Tür filtresini JS tarafında uygulayacağız (çünkü order_items içinde nested filtrelenmesi gerekiyor)
+  if (p.species) {
+    ordersData = ordersData.filter((order) =>
+      order.order_items?.some((item: any) => item.species_id === p.species)
+    )
+  }
+
+  // Sipariş toplam fiyatını hesaplayan yardımcı fonksiyon
+  const getOrderTotal = (order: any) => {
+    return order.order_items?.reduce((sum: number, item: any) => sum + (Number(item.price_at_sale) * item.quantity), 0) || 0
+  }
+
   // İstatistik Metrikleri
-  const totalRevenue =
-    allOrdersData.reduce((sum, order) => sum + Number(order.price_at_sale), 0) || 0
-  const pendingPayments =
-    allOrdersData
-      .filter((o) => !o.payment_completed)
-      .reduce((sum, order) => sum + Number(order.price_at_sale), 0) || 0
-  const pendingCargoCount =
-    allOrdersData.filter((o) => o.payment_completed && !o.cargo_sent).length || 0
-  const totalSalesCount = allOrdersData.length || 0
+  const totalRevenue = allOrdersData.reduce((sum, order) => sum + getOrderTotal(order), 0)
+  
+  const pendingPayments = allOrdersData
+    .filter((o) => !o.payment_completed)
+    .reduce((sum, order) => sum + getOrderTotal(order), 0)
+    
+  // Kargo Bekleyen: Ödemesi iletilmiş, admin tarafından onaylanmış ama kargo gönderilmemiş sipariş sayısı
+  const pendingCargoCount = allOrdersData.filter((o) => o.payment_completed && o.admin_approved && !o.cargo_sent).length
+  
+  const totalSalesCount = allOrdersData.length
+
+  // Admin Onayı Bekleyen Siparişler: Ödemesi yapılmış (payment_completed = true) ama admin onaylamamış (admin_approved = false)
+  const approvalPendingOrders = allOrdersData.filter((o) => o.payment_completed && !o.admin_approved)
 
   // Sipariş Silme Eylemi (Server Action)
   async function handleDelete(formData: FormData) {
@@ -99,6 +99,27 @@ export default async function AdminDashboardContent({
     const id = formData.get('id') as string
     const supabaseClient = await createClient()
     await supabaseClient.from('orders').delete().eq('id', id)
+    revalidatePath('/admin')
+  }
+
+  // Sipariş Onaylama Eylemi (Server Action)
+  async function handleApprove(formData: FormData) {
+    'use server'
+    const id = formData.get('id') as string
+    const supabaseClient = await createClient()
+    
+    Logger.info(`Sipariş admin tarafından onaylanıyor. Sipariş ID: ${id}`)
+    const { error } = await supabaseClient
+      .from('orders')
+      .update({ admin_approved: true })
+      .eq('id', id)
+
+    if (error) {
+      Logger.error(`Sipariş onaylanırken hata oluştu: ${error.message}`)
+    } else {
+      Logger.info(`Sipariş başarıyla onaylandı ve kargocuya yönlendirildi. ID: ${id}`)
+    }
+    
     revalidatePath('/admin')
   }
 
@@ -163,6 +184,91 @@ export default async function AdminDashboardContent({
         </div>
       </div>
 
+      {/* ========================================================================= */}
+      {/* ONAY BEKLEYEN SİPARİŞLER BÖLÜMÜ */}
+      {/* ========================================================================= */}
+      {approvalPendingOrders.length > 0 && (
+        <div className="glass-card" style={{ marginBottom: '2rem', border: '1px solid rgba(245, 158, 11, 0.3)', background: 'rgba(245, 158, 11, 0.02)' }}>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <ShieldAlert size={20} />
+            Onay Bekleyen Siparişler ({approvalPendingOrders.length} Adet)
+          </h2>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+            Aşağıdaki siparişlerin ödemeleri bayiler tarafından admine iletilmiştir. Onayladığınızda sipariş kargocunun ekranına düşecektir.
+          </p>
+
+          <div className="table-container">
+            <table className="custom-table">
+              <thead>
+                <tr>
+                  <th>Bayi</th>
+                  <th>Alıcı / Telefon</th>
+                  <th>Sepet İçeriği</th>
+                  <th>Toplam Tutar</th>
+                  <th style={{ textAlign: 'center' }}>Müşteri Tipi</th>
+                  <th style={{ textAlign: 'center' }}>Tarih</th>
+                  <th style={{ textAlign: 'right' }}>İşlem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {approvalPendingOrders.map((order) => {
+                  const orderTotal = getOrderTotal(order)
+                  const dealerName = (order as any).profiles?.username || 'Bilinmeyen Bayi'
+                  
+                  // items içindeki species'lerin ismini bulalım (allOrders listesinde allOrdersData join'siz geldiğinden veritabanından çekilen ordersData'dan eşleyebiliriz)
+                  const joinedOrder = ordersData.find((o) => o.id === order.id) || order;
+                  
+                  return (
+                    <tr key={order.id} style={{ background: 'rgba(245, 158, 11, 0.03)' }}>
+                      <td style={{ color: 'var(--primary)', fontWeight: 600 }}>@{dealerName}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        <div>{order.receiver_name}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.25rem' }}>
+                          <Phone size={12} /> {order.phone_number || '-'}
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          {joinedOrder.order_items?.map((item: any, idx: number) => (
+                            <div key={idx} style={{ fontSize: '0.8rem' }}>
+                              • <span style={{ fontStyle: 'italic' }}>{item.species?.name || 'Bilinmeyen Tür'}</span> ({item.quantity} adet)
+                            </div>
+                          )) || <span style={{ color: 'var(--text-muted)' }}>-</span>}
+                        </div>
+                      </td>
+                      <td style={{ fontWeight: 700, color: 'var(--success)' }}>
+                        {orderTotal.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span className={order.is_known_customer ? 'badge badge-info' : 'badge badge-warning'}>
+                          {order.is_known_customer ? 'Bilinen' : 'Bilinmeyen'}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        {new Date(order.created_at).toLocaleDateString('tr-TR', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <form action={handleApprove} style={{ display: 'inline-block' }}>
+                          <input type="hidden" name="id" value={order.id} />
+                          <button type="submit" className="btn btn-primary" style={{ padding: '0.35rem 0.75rem', background: '#f59e0b', borderColor: '#d97706', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                            <Check size={14} />
+                            <span>Siparişi Onayla</span>
+                          </button>
+                        </form>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Filtreleme Paneli */}
       <div className="glass-card" style={{ marginBottom: '2rem' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -198,7 +304,7 @@ export default async function AdminDashboardContent({
             <label className="form-label" htmlFor="payment">Ödeme Durumu</label>
             <select name="payment" id="payment" className="form-input" defaultValue={p.payment || ''}>
               <option value="">Tümü</option>
-              <option value="true">Ödeme Tamamlandı</option>
+              <option value="true">Ödeme Admine İletildi</option>
               <option value="false">Ödeme Bekliyor</option>
             </select>
           </div>
@@ -229,47 +335,71 @@ export default async function AdminDashboardContent({
             <table className="custom-table">
               <thead>
                 <tr>
-                  <th>Alıcı</th>
-                  <th>Konum / Şube</th>
-                  <th>Tür</th>
-                  <th>Satış Fiyatı</th>
                   <th>Bayi</th>
-                  <th>Ödeme</th>
-                  <th>Kargo</th>
-                  <th>Kargo Kodu</th>
+                  <th>Alıcı / Telefon</th>
+                  <th>Sepet İçeriği</th>
+                  <th>Toplam Tutar</th>
+                  <th style={{ textAlign: 'center' }}>Müşteri Tipi</th>
+                  <th style={{ textAlign: 'center' }}>Admine Ödeme</th>
+                  <th style={{ textAlign: 'center' }}>Admin Onayı</th>
+                  <th>Kargo Durumu</th>
                   <th>Tarih</th>
                   <th style={{ textAlign: 'right' }}>İşlemler</th>
                 </tr>
               </thead>
               <tbody>
                 {ordersData.map((order) => {
-                  const speciesName = (order.species as any)?.name || 'Bilinmeyen Tür'
+                  const orderTotal = getOrderTotal(order)
                   const dealerName = (order.profiles as any)?.username || 'Bilinmeyen Bayi'
                   
                   return (
                     <tr key={order.id}>
-                      <td style={{ fontWeight: 600 }}>{order.receiver_name}</td>
-                      <td>
-                        <div style={{ fontSize: '0.85rem' }}>{order.city} / {order.district}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{order.cargo_branch}</div>
-                      </td>
-                      <td>{speciesName}</td>
-                      <td style={{ fontWeight: 600 }}>
-                        {Number(order.price_at_sale).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
-                      </td>
                       <td style={{ color: 'var(--primary)', fontWeight: 500 }}>@{dealerName}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        <div>{order.receiver_name}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.25rem' }}>
+                          <Phone size={12} /> {order.phone_number || '-'}
+                        </div>
+                      </td>
                       <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          {order.order_items?.map((item: any, idx: number) => (
+                            <div key={idx} style={{ fontSize: '0.8rem' }}>
+                              • <span style={{ fontStyle: 'italic' }}>{item.species?.name || 'Bilinmeyen Tür'}</span> ({item.quantity} adet)
+                            </div>
+                          )) || <span style={{ color: 'var(--text-muted)' }}>Sepet Boş</span>}
+                        </div>
+                      </td>
+                      <td style={{ fontWeight: 700, color: 'var(--success)' }}>
+                        {orderTotal.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span className={order.is_known_customer ? 'badge badge-info' : 'badge badge-warning'}>
+                          {order.is_known_customer ? 'Bilinen' : 'Bilinmeyen'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
                         <span className={order.payment_completed ? 'badge badge-success' : 'badge badge-warning'}>
                           {order.payment_completed ? 'İletildi' : 'Bekliyor'}
                         </span>
                       </td>
-                      <td>
-                        <span className={order.cargo_sent ? 'badge badge-success' : 'badge badge-warning'}>
-                          {order.cargo_sent ? 'Gönderildi' : 'Bekliyor'}
+                      <td style={{ textAlign: 'center' }}>
+                        <span className={order.admin_approved ? 'badge badge-success' : 'badge badge-warning'} style={{ gap: '0.25rem' }}>
+                          {order.admin_approved ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+                          {order.admin_approved ? 'Onaylandı' : 'Bekliyor'}
                         </span>
                       </td>
-                      <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600 }}>
-                        {order.cargo_code || '-'}
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          <span className={order.cargo_sent ? 'badge badge-success' : 'badge badge-warning'}>
+                            {order.cargo_sent ? 'Gönderildi' : 'Kargoya Verilmedi'}
+                          </span>
+                          {order.cargo_code && (
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600 }}>
+                              {order.cargo_code}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                         {new Date(order.created_at).toLocaleDateString('tr-TR', {

@@ -16,7 +16,7 @@ export default async function NewOrderPage() {
   // Bayi kontrolü
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, is_unknown_dealer')
     .eq('id', user.id)
     .single()
 
@@ -37,7 +37,7 @@ export default async function NewOrderPage() {
       </div>
 
       <div className="glass-card" style={{ padding: '2.5rem' }}>
-        <OrderForm speciesList={speciesList || []} />
+        <OrderForm speciesList={speciesList || []} isUnknownDealer={profile?.is_unknown_dealer || false} />
       </div>
     </div>
   )
