@@ -19,7 +19,7 @@ export default async function PendingPage() {
     .eq('id', user.id)
     .single()
 
-  if (profile?.role !== 'pending') {
+  if (profile && profile.role !== 'pending') {
     redirect('/')
   }
 

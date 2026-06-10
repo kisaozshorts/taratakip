@@ -27,7 +27,7 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  // Kullanıcı oturumunu güvenli bir şekilde doğrula
+  // Oturumu güvenli bir şekilde doğrula (Veritabanı sorgusu içermez, hızlıdır)
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -54,54 +54,8 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse
   }
 
-  // Giriş yapmış kullanıcının profil rolünü veritabanından sorgula
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-
-  const role = profile?.role || 'pending'
-
-  // Giriş yapmış kullanıcıyı /login veya /register sayfalarından ana sayfaya yönlendir
-  if (path === '/login' || path === '/register') {
-    const url = request.nextUrl.clone()
-    url.pathname = '/'
-    return NextResponse.redirect(url)
-  }
-
-  // Ana sayfaya gelen kullanıcıyı rolüne göre ilgili alt sayfaya yönlendir
-  if (path === '/') {
-    const url = request.nextUrl.clone()
-    if (role === 'admin') {
-      url.pathname = '/admin'
-    } else if (role === 'dealer') {
-      url.pathname = '/dealer'
-    } else if (role === 'shipper') {
-      url.pathname = '/shipper'
-    } else {
-      url.pathname = '/pending'
-    }
-    return NextResponse.redirect(url)
-  }
-
-  // Sayfa bazlı rol doğrulamaları (Yetkisiz erişimleri ana sayfaya yönlendir, oradan doğru role dağıtılacak)
-  if (path.startsWith('/admin') && role !== 'admin') {
-    const url = request.nextUrl.clone()
-    url.pathname = '/'
-    return NextResponse.redirect(url)
-  }
-  if (path.startsWith('/dealer') && role !== 'dealer') {
-    const url = request.nextUrl.clone()
-    url.pathname = '/'
-    return NextResponse.redirect(url)
-  }
-  if (path.startsWith('/shipper') && role !== 'shipper') {
-    const url = request.nextUrl.clone()
-    url.pathname = '/'
-    return NextResponse.redirect(url)
-  }
-  if (path.startsWith('/pending') && role !== 'pending') {
+  // Giriş yapmış kullanıcıyı /login veya /register sayfalarından yönlendir
+  if (user && (path === '/login' || path === '/register')) {
     const url = request.nextUrl.clone()
     url.pathname = '/'
     return NextResponse.redirect(url)
