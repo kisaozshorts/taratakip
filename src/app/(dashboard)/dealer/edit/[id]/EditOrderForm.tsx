@@ -232,12 +232,7 @@ export default function EditOrderForm({
           </label>
         </div>
       ) : (
-        <div className="glass-card" style={{ padding: '0.75rem 1rem', background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.15)', marginBottom: '1.5rem', borderRadius: '8px' }}>
-          <p style={{ fontSize: '0.8rem', color: '#f87171', margin: 0, fontWeight: 500 }}>
-            ⚠️ Hesabınız "Bilinmeyen Bayi" olarak işaretlendiği için bu sipariş otomatik olarak <strong>Bilinmeyen Müşteri</strong> olarak kaydedilecektir.
-          </p>
-          <input type="hidden" name="is_known_customer" value="false" />
-        </div>
+        <input type="hidden" name="is_known_customer" value="false" />
       )}
 
       {/* SEPET SİSTEMİ */}
