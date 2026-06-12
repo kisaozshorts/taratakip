@@ -3,12 +3,18 @@
 import React, { useActionState, useState } from 'react'
 import Link from 'next/link'
 import { createOrder } from '../actions'
-import { Plus, Trash2, ShoppingCart } from 'lucide-react'
+import { Plus, Trash2, ShoppingCart, Percent } from 'lucide-react'
 
 interface Species {
   id: string
   name: string
   price: number
+}
+
+interface BulkDiscount {
+  species_id: string
+  quantity: number
+  discounted_price: number
 }
 
 interface CartItem {
@@ -20,17 +26,44 @@ interface CartItem {
 
 export default function OrderForm({
   speciesList,
-  isUnknownDealer
+  isUnknownDealer,
+  bulkDiscounts = [],
+  dealerDiscountPercentage = 0
 }: {
   speciesList: Species[]
   isUnknownDealer: boolean
+  bulkDiscounts: BulkDiscount[]
+  dealerDiscountPercentage: number
 }) {
   const [state, formAction, isPending] = useActionState(createOrder, { error: null as string | null })
   const [cart, setCart] = useState<CartItem[]>([])
   
   // Seçili tarantula ve adet state'leri
   const [selectedSpeciesId, setSelectedSpeciesId] = useState('')
-  const [quantity, setQuantity] = useState(1)
+  const [quantity, setQuantity] = useState<number | ''>(1)
+
+  // İndirimli fiyatı hesaplayan yardımcı fonksiyon
+  const getDiscountedPrice = (speciesId: string, qty: number, basePrice: number) => {
+    const speciesDiscounts = bulkDiscounts.filter((bd) => bd.species_id === speciesId)
+    let appliedPrice = basePrice
+    let maxQtyRule = 0
+    
+    for (const rule of speciesDiscounts) {
+      if (qty >= rule.quantity && rule.quantity > maxQtyRule) {
+        maxQtyRule = rule.quantity
+        appliedPrice = Number(rule.discounted_price)
+      }
+    }
+    
+    const finalPrice = appliedPrice * (1 - (dealerDiscountPercentage || 0) / 100)
+    return {
+      unitPrice: finalPrice,
+      isDiscounted: finalPrice < basePrice,
+      bulkApplied: maxQtyRule > 0,
+      dealerApplied: (dealerDiscountPercentage || 0) > 0,
+      appliedPriceBeforeDealer: appliedPrice
+    }
+  }
 
   // Sepete ürün ekleme
   const handleAddToBag = (e: React.MouseEvent) => {
@@ -40,11 +73,14 @@ export default function OrderForm({
     const selectedSpecies = speciesList.find((s) => s.id === selectedSpeciesId)
     if (!selectedSpecies) return
 
+    const qty = typeof quantity === 'number' ? quantity : 1
+    if (qty < 1) return
+
     const existingIndex = cart.findIndex((item) => item.speciesId === selectedSpeciesId)
     if (existingIndex > -1) {
       // Zaten varsa adet arttır
       const updatedCart = [...cart]
-      updatedCart[existingIndex].quantity += quantity
+      updatedCart[existingIndex].quantity += qty
       setCart(updatedCart)
     } else {
       // Yoksa yeni ekle
@@ -54,7 +90,7 @@ export default function OrderForm({
           speciesId: selectedSpecies.id,
           name: selectedSpecies.name,
           price: Number(selectedSpecies.price),
-          quantity: quantity
+          quantity: qty
         }
       ])
     }
@@ -70,7 +106,10 @@ export default function OrderForm({
   }
 
   // Toplam sepet tutarı
-  const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
+  const totalPrice = cart.reduce((sum, item) => {
+    const { unitPrice } = getDiscountedPrice(item.speciesId, item.quantity, item.price)
+    return sum + unitPrice * item.quantity
+  }, 0)
 
   return (
     <form action={formAction}>
@@ -96,7 +135,7 @@ export default function OrderForm({
       <div className="form-group">
         <label className="form-label" htmlFor="phone_number">Alıcı Telefon Numarası</label>
         <input
-          type="tel"
+          type="text"
           id="phone_number"
           name="phone_number"
           className="form-input"
@@ -199,7 +238,17 @@ export default function OrderForm({
               min="1"
               className="form-input"
               value={quantity}
-              onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={(e) => {
+                const val = e.target.value
+                if (val === '') {
+                  setQuantity('')
+                } else {
+                  const parsed = parseInt(val)
+                  if (!isNaN(parsed)) {
+                    setQuantity(parsed)
+                  }
+                }
+              }}
               placeholder="Adet"
               style={{ height: '42px', textAlign: 'center' }}
             />
@@ -231,25 +280,44 @@ export default function OrderForm({
                   </tr>
                 </thead>
                 <tbody>
-                  {cart.map((item, index) => (
-                    <tr key={index}>
-                      <td style={{ fontStyle: 'italic', fontWeight: 600 }}>{item.name}</td>
-                      <td style={{ textAlign: 'center', fontWeight: 600 }}>{item.quantity} adet</td>
-                      <td>{item.price.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</td>
-                      <td style={{ fontWeight: 600 }}>
-                        {(item.price * item.quantity).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveFromBag(index)}
-                          style={{ background: 'transparent', border: 'none', color: 'var(--error)', cursor: 'pointer' }}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {cart.map((item, index) => {
+                    const priceInfo = getDiscountedPrice(item.speciesId, item.quantity, item.price)
+                    return (
+                      <tr key={index}>
+                        <td style={{ fontStyle: 'italic', fontWeight: 600 }}>{item.name}</td>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{item.quantity} adet</td>
+                        <td>
+                          {priceInfo.isDiscounted ? (
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <span style={{ textDecoration: 'line-through', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                {item.price.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                              </span>
+                              <span style={{ color: 'var(--success)', fontWeight: 600 }}>
+                                {priceInfo.unitPrice.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                              </span>
+                              <span style={{ fontSize: '0.65rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '2px', marginTop: '2px' }}>
+                                <Percent size={8} /> {priceInfo.bulkApplied ? 'Toplu' : ''} {priceInfo.dealerApplied ? `+ %${dealerDiscountPercentage} Bayi` : ''} İndirimi
+                              </span>
+                            </div>
+                          ) : (
+                            <span>{item.price.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</span>
+                          )}
+                        </td>
+                        <td style={{ fontWeight: 600, color: 'var(--text-main)' }}>
+                          {(priceInfo.unitPrice * item.quantity).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFromBag(index)}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--error)', cursor: 'pointer' }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -257,9 +325,16 @@ export default function OrderForm({
             {/* Toplam Fiyat */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)', fontWeight: 700 }}>
               <span style={{ color: 'var(--text-muted)' }}>Genel Toplam Tutar:</span>
-              <span style={{ fontSize: '1.2rem', color: 'var(--success)' }}>
-                {totalPrice.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
-              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                <span style={{ fontSize: '1.2rem', color: 'var(--success)' }}>
+                  {totalPrice.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
+                </span>
+                {dealerDiscountPercentage > 0 && (
+                  <span style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 500, marginTop: '2px' }}>
+                    (Özel %{dealerDiscountPercentage} Bayi İndirimi Dahil)
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         ) : (

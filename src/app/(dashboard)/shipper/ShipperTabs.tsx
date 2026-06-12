@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { Check, PackageOpen, Calendar, MapPin, Tag, User, Phone, ShoppingCart, Truck } from 'lucide-react'
+import CopyButton from '@/components/CopyButton'
 
 interface OrderItem {
   id: string
@@ -24,6 +25,8 @@ interface Order {
   shipping_company_id: string | null
   created_at: string
   is_known_customer: boolean
+  order_code: string | null
+  delivery_status: string | null
   profiles: {
     username: string
   } | null
@@ -141,6 +144,31 @@ export default function ShipperTabs({
 
                   {/* Detay Bilgileri */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)' }}>
+                      <Tag size={16} style={{ color: 'var(--primary)' }} />
+                      <span>Sipariş Kodu:</span>
+                      <span style={{ color: 'var(--primary)', fontWeight: 700, fontFamily: 'monospace' }}>
+                        {order.order_code || '-'}
+                      </span>
+                      {order.order_code && <CopyButton text={order.order_code} />}
+                    </div>
+
+                    {order.cargo_sent && order.delivery_status && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)' }}>
+                        <Truck size={16} style={{ color: 'var(--primary)' }} />
+                        <span>Teslimat Durumu:</span>
+                        {order.delivery_status === 'delivered' ? (
+                          <span className="badge badge-success" style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}>
+                            Canlı Sağlıklı Teslim Edildi
+                          </span>
+                        ) : (
+                          <span className="badge badge-danger" style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}>
+                            Sorun Bildirildi
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)' }}>
                       <Phone size={16} style={{ color: 'var(--primary)' }} />
                       <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>

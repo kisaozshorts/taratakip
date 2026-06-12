@@ -29,18 +29,20 @@ export default async function EditOrderPage({
     redirect('/')
   }
 
-  // Sipariş, kalemler, profil ve türleri paralel çekelim (Performans!)
-  const [orderRes, orderItemsRes, profileRes, speciesListRes] = await Promise.all([
+  // Sipariş, kalemler, profil, türleri ve toplu indirimleri paralel çekelim (Performans!)
+  const [orderRes, orderItemsRes, profileRes, speciesListRes, bulkDiscountsRes] = await Promise.all([
     supabase.from('orders').select('*').eq('id', id).single(),
     supabase.from('order_items').select('*, species:species_id(name)').eq('order_id', id),
-    supabase.from('profiles').select('role, is_unknown_dealer').eq('id', user.id).single(),
-    supabase.from('species').select('id, name, price').order('name', { ascending: true })
+    supabase.from('profiles').select('role, is_unknown_dealer, discount_percentage').eq('id', user.id).single(),
+    supabase.from('species').select('id, name, price').order('name', { ascending: true }),
+    supabase.from('bulk_discounts').select('*')
   ])
 
   const order = orderRes.data
   const orderItems = orderItemsRes.data
   const profile = profileRes.data
   const speciesList = speciesListRes.data
+  const bulkDiscounts = bulkDiscountsRes.data || []
 
   if (!order || order.dealer_id !== user.id) {
     redirect('/dealer')
@@ -77,6 +79,8 @@ export default async function EditOrderPage({
           orderItems={orderItems || []}
           speciesList={speciesList || []}
           isUnknownDealer={profile?.is_unknown_dealer || false}
+          bulkDiscounts={bulkDiscounts}
+          dealerDiscountPercentage={profile?.discount_percentage || 0}
         />
       </div>
     </div>

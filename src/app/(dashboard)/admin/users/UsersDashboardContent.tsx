@@ -69,6 +69,24 @@ export default async function UsersDashboardContent() {
     revalidatePath('/admin/users')
   }
 
+  // Eylem 3: Bayi İndirimi Güncelle (Server Action)
+  async function updateDiscount(formData: FormData) {
+    'use server'
+    const profileId = formData.get('id') as string
+    const discountStr = formData.get('discount_percentage') as string
+    const discount = Number(discountStr)
+
+    if (!profileId || isNaN(discount) || discount < 0 || discount > 100) return
+
+    const supabaseClient = await createClient()
+    await supabaseClient
+      .from('profiles')
+      .update({ discount_percentage: discount })
+      .eq('id', profileId)
+
+    revalidatePath('/admin/users')
+  }
+
   const getRoleBadgeClass = (role: string) => {
     if (role === 'admin') return 'badge badge-danger'
     if (role === 'dealer') return 'badge badge-success'
@@ -98,6 +116,7 @@ export default async function UsersDashboardContent() {
                 <th>Kullanıcı Adı</th>
                 <th>Mevcut Yetki</th>
                 <th style={{ textAlign: 'center' }}>Bilinmeyen Bayi mi? (Only Dealer)</th>
+                <th style={{ textAlign: 'center' }}>Özel İndirim (%)</th>
                 <th>Kayıt Tarihi</th>
                 <th style={{ textAlign: 'right' }}>Yeni Yetki Ata</th>
               </tr>
@@ -142,6 +161,29 @@ export default async function UsersDashboardContent() {
                               <span>Hayır (Bilinen)</span>
                             </>
                           )}
+                        </button>
+                      </form>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>-</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    {p.role === 'dealer' ? (
+                      <form action={updateDiscount} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', justifyContent: 'center' }}>
+                        <input type="hidden" name="id" value={p.id} />
+                        <input
+                          type="number"
+                          name="discount_percentage"
+                          min="0"
+                          max="100"
+                          step="0.1"
+                          defaultValue={p.discount_percentage || 0}
+                          className="form-input"
+                          style={{ width: '70px', padding: '0.2rem 0.4rem', height: '28px', textAlign: 'center', fontSize: '0.8rem', marginBottom: 0 }}
+                          required
+                        />
+                        <button type="submit" className="btn btn-primary" style={{ padding: '0 0.4rem', height: '28px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="İndirimi Güncelle">
+                          %
                         </button>
                       </form>
                     ) : (

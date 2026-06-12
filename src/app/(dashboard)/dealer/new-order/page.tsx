@@ -13,22 +13,29 @@ export default async function NewOrderPage() {
     redirect('/login')
   }
 
-  // Bayi kontrolü
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, is_unknown_dealer')
-    .eq('id', user.id)
-    .single()
+  // Tüm verileri paralel olarak çekelim
+  const [profileRes, speciesRes, bulkDiscountsRes] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('role, is_unknown_dealer, discount_percentage')
+      .eq('id', user.id)
+      .single(),
+    supabase
+      .from('species')
+      .select('id, name, price')
+      .order('name', { ascending: true }),
+    supabase
+      .from('bulk_discounts')
+      .select('*')
+  ])
+
+  const profile = profileRes.data
+  const speciesList = speciesRes.data
+  const bulkDiscounts = bulkDiscountsRes.data || []
 
   if (profile?.role !== 'dealer') {
     redirect('/')
   }
-
-  // Tarantula türlerini çekelim
-  const { data: speciesList } = await supabase
-    .from('species')
-    .select('id, name, price')
-    .order('name', { ascending: true })
 
   return (
     <div style={{ maxWidth: '600px', margin: '0 auto' }}>
@@ -37,7 +44,12 @@ export default async function NewOrderPage() {
       </div>
 
       <div className="glass-card" style={{ padding: '2.5rem' }}>
-        <OrderForm speciesList={speciesList || []} isUnknownDealer={profile?.is_unknown_dealer || false} />
+        <OrderForm
+          speciesList={speciesList || []}
+          isUnknownDealer={profile?.is_unknown_dealer || false}
+          bulkDiscounts={bulkDiscounts}
+          dealerDiscountPercentage={profile?.discount_percentage || 0}
+        />
       </div>
     </div>
   )

@@ -33,7 +33,7 @@ export async function createOrder(prevState: any, formData: FormData) {
 
   if (!receiver_name || !city || !district || !cargo_branch || !phone_number || !itemsStr) {
     Logger.warn('Sipariş oluşturma başarısız: Eksik alanlar var.')
-    return { error: 'Lütfen tüm alanları doldurun ve sepete en az bir ürün ekleyin.' }
+    return { error: 'Lütfen tüm alanları doldurun und sepete en az bir ürün ekleyin.' }
   }
 
   let items: CartItem[] = []
@@ -62,7 +62,7 @@ export async function createOrder(prevState: any, formData: FormData) {
   // Bayinin profilini ve is_unknown_dealer durumunu kontrol et
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('is_unknown_dealer')
+    .select('is_unknown_dealer, discount_percentage')
     .eq('id', user.id)
     .single()
 
@@ -101,28 +101,49 @@ export async function createOrder(prevState: any, formData: FormData) {
 
   // Sepetteki tarantula türlerinin fiyatlarını tek seferde çekelim
   const speciesIds = items.map((i) => i.speciesId)
-  const { data: speciesList, error: speciesError } = await supabase
-    .from('species')
-    .select('id, price')
-    .in('id', speciesIds)
+  
+  // Türleri ve toplu indirim kurallarını paralel sorgu ile çekelim
+  const [speciesRes, bulkDiscountsRes] = await Promise.all([
+    supabase.from('species').select('id, price').in('id', speciesIds),
+    supabase.from('bulk_discounts').select('*').in('species_id', speciesIds)
+  ])
 
-  if (speciesError || !speciesList) {
-    Logger.error('Sepet kalemleri eklenirken tür fiyatları alınamadı:', speciesError)
+  const speciesList = speciesRes.data
+  const bulkDiscounts = bulkDiscountsRes.data || []
+
+  if (speciesRes.error || !speciesList) {
+    Logger.error('Sepet kalemleri eklenirken tür fiyatları alınamadı:', speciesRes.error)
     // Üst kaydı geri silelim (rollback)
     await supabase.from('orders').delete().eq('id', newOrder.id)
     return { error: 'Tarantula tür bilgileri doğrulanamadı.' }
   }
 
   const speciesMap = new Map(speciesList.map((s) => [s.id, Number(s.price)]))
+  const dealerDiscount = Number(profile.discount_percentage) || 0
 
-  // Kalemleri insert edelim
+  // Kalemleri hesaplayıp insert edelim
   const orderItemsData = items.map((item) => {
-    const price = speciesMap.get(item.speciesId) || 0
+    const basePrice = speciesMap.get(item.speciesId) || 0
+    
+    // Toplu indirim kuralını bulalım
+    const itemDiscounts = bulkDiscounts.filter((bd) => bd.species_id === item.speciesId)
+    let appliedPrice = basePrice
+    let maxQtyRule = 0
+    for (const rule of itemDiscounts) {
+      if (item.quantity >= rule.quantity && rule.quantity > maxQtyRule) {
+        maxQtyRule = rule.quantity
+        appliedPrice = Number(rule.discounted_price)
+      }
+    }
+
+    // Bayi yüzdelik indirimini uygulayalım
+    const priceAtSale = appliedPrice * (1 - dealerDiscount / 100)
+
     return {
       order_id: newOrder.id,
       species_id: item.speciesId,
       quantity: item.quantity,
-      price_at_sale: price
+      price_at_sale: priceAtSale
     }
   })
 
@@ -214,7 +235,7 @@ export async function updateOrder(prevState: any, formData: FormData) {
   // Bayinin profilini kontrol et
   const { data: profile } = await supabase
     .from('profiles')
-    .select('is_unknown_dealer')
+    .select('is_unknown_dealer, discount_percentage')
     .eq('id', user.id)
     .single()
 
@@ -242,26 +263,46 @@ export async function updateOrder(prevState: any, formData: FormData) {
   Logger.info(`Eski sipariş kalemleri siliniyor. Sipariş ID: ${id}`)
   await supabase.from('order_items').delete().eq('order_id', id)
 
-  // Yeni kalemlerin fiyatlarını çekelim
+  // Yeni kalemlerin fiyatlarını ve indirimlerini çekelim
   const speciesIds = items.map((i) => i.speciesId)
-  const { data: speciesList, error: speciesError } = await supabase
-    .from('species')
-    .select('id, price')
-    .in('id', speciesIds)
+  const [speciesRes, bulkDiscountsRes] = await Promise.all([
+    supabase.from('species').select('id, price').in('id', speciesIds),
+    supabase.from('bulk_discounts').select('*').in('species_id', speciesIds)
+  ])
 
-  if (speciesError || !speciesList) {
-    Logger.error('Sipariş kalemleri güncellenirken tarantula fiyatları alınamadı:', speciesError)
+  const speciesList = speciesRes.data
+  const bulkDiscounts = bulkDiscountsRes.data || []
+
+  if (speciesRes.error || !speciesList) {
+    Logger.error('Sipariş kalemleri güncellenirken tarantula fiyatları alınamadı:', speciesRes.error)
     return { error: 'Tarantula fiyatları doğrulanamadı.' }
   }
 
   const speciesMap = new Map(speciesList.map((s) => [s.id, Number(s.price)]))
+  const dealerDiscount = Number(profile?.discount_percentage) || 0
+
   const orderItemsData = items.map((item) => {
-    const price = speciesMap.get(item.speciesId) || 0
+    const basePrice = speciesMap.get(item.speciesId) || 0
+    
+    // Toplu indirim kuralını bulalım
+    const itemDiscounts = bulkDiscounts.filter((bd) => bd.species_id === item.speciesId)
+    let appliedPrice = basePrice
+    let maxQtyRule = 0
+    for (const rule of itemDiscounts) {
+      if (item.quantity >= rule.quantity && rule.quantity > maxQtyRule) {
+        maxQtyRule = rule.quantity
+        appliedPrice = Number(rule.discounted_price)
+      }
+    }
+
+    // Bayi yüzdelik indirimini uygulayalım
+    const priceAtSale = appliedPrice * (1 - dealerDiscount / 100)
+
     return {
       order_id: id,
       species_id: item.speciesId,
       quantity: item.quantity,
-      price_at_sale: price
+      price_at_sale: priceAtSale
     }
   })
 
@@ -277,4 +318,46 @@ export async function updateOrder(prevState: any, formData: FormData) {
   Logger.info(`Sipariş başarıyla güncellendi! ID: ${id}`)
   revalidatePath('/dealer')
   redirect('/dealer')
+}
+
+export async function updateDeliveryStatus(orderId: string, status: 'delivered' | 'issue') {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  // Siparişin varlığını ve sahipliğini kontrol et
+  const { data: order, error: fetchError } = await supabase
+    .from('orders')
+    .select('dealer_id, cargo_sent')
+    .eq('id', orderId)
+    .single()
+
+  if (fetchError || !order) {
+    Logger.error(`Teslimat durumu güncellenemedi: Sipariş bulunamadı. ID: ${orderId}`)
+    return { error: 'Sipariş bulunamadı.' }
+  }
+
+  if (order.dealer_id !== user.id) {
+    Logger.warn(`Teslimat durumu güncelleme engellendi: Yetkisiz erişim denemesi! Kullanıcı: ${user.email}`)
+    return { error: 'Bu siparişi güncelleme yetkiniz yok.' }
+  }
+
+  if (!order.cargo_sent) {
+    Logger.warn(`Teslimat durumu güncelleme engellendi: Sipariş henüz kargolanmamış. ID: ${orderId}`)
+    return { error: 'Henüz kargolanmamış bir siparişin teslimat durumu güncellenemez.' }
+  }
+
+  const { error } = await supabase
+    .from('orders')
+    .update({ delivery_status: status })
+    .eq('id', orderId)
+
+  if (error) {
+    Logger.error(`Teslimat durumu güncellenirken veritabanı hatası: ${error.message}`)
+    return { error: 'Hata oluştu: ' + error.message }
+  }
+
+  Logger.info(`Teslimat durumu başarıyla güncellendi. Sipariş ID: ${orderId}, Durum: ${status}`)
+  revalidatePath('/dealer')
+  return { success: true }
 }

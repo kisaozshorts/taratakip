@@ -13,7 +13,9 @@ import {
   LogOut,
   User,
   ShieldAlert,
-  Truck
+  Truck,
+  Search,
+  Percent
 } from 'lucide-react'
 
 interface LayoutProps {
@@ -61,6 +63,18 @@ export default async function DashboardLayout({ children }: LayoutProps) {
               <Link href="/admin/shipping" className="sidebar-link">
                 <Truck size={18} />
                 <span>Kargo Firmaları Yönetimi</span>
+              </Link>
+            </li>
+            <li>
+              <Link href="/admin/search" className="sidebar-link">
+                <Search size={18} />
+                <span>Sipariş Sorgula</span>
+              </Link>
+            </li>
+            <li>
+              <Link href="/admin/discounts" className="sidebar-link">
+                <Percent size={18} />
+                <span>Toplu İndirimler</span>
               </Link>
             </li>
             <li>

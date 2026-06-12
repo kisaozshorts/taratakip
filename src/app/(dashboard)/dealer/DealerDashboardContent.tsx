@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { DollarSign, ShoppingBag, CreditCard, Truck, Edit, CheckSquare, Square, Phone, ShieldCheck, ShieldAlert } from 'lucide-react'
 import Link from 'next/link'
 import DeleteButton from '@/components/DeleteButton'
+import CopyButton from '@/components/CopyButton'
 
 export default async function DealerDashboardContent() {
   const supabase = await createClient()
@@ -16,7 +17,7 @@ export default async function DealerDashboardContent() {
     redirect('/login')
   }
 
-  // Siparişleri, sepet kalemlerini ve tarantula tür adlarını tek sorguda çekelim (Supabase JOIN gücü!)
+  // Siparişleri, sepet kalemlerini, tarantula tür adlarını ve kargo firmasını çekelim
   const [profileRes, ordersRes] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).single(),
     supabase.from('orders')
@@ -99,6 +100,34 @@ export default async function DealerDashboardContent() {
     }
   }
 
+  // Eylem 3: Teslimat Durumu Güncelle (Server Action)
+  async function handleSetDeliveryStatus(formData: FormData) {
+    'use server'
+    const id = formData.get('id') as string
+    const status = formData.get('status') as 'delivered' | 'issue'
+
+    if (!id || !status) return
+
+    const supabaseClient = await createClient()
+    const { data: { user: currentUser } } = await supabaseClient.auth.getUser()
+    if (!currentUser) return
+
+    const { data: order } = await supabaseClient
+      .from('orders')
+      .select('dealer_id, cargo_sent')
+      .eq('id', id)
+      .single()
+
+    // Güvenlik doğrulaması: Sipariş bu bayiye ait olmalı ve kargolanmış olmalı
+    if (order && order.dealer_id === currentUser.id && order.cargo_sent) {
+      await supabaseClient
+        .from('orders')
+        .update({ delivery_status: status })
+        .eq('id', id)
+      revalidatePath('/dealer')
+    }
+  }
+
   return (
     <div>
       {/* İstatistikler */}
@@ -153,6 +182,7 @@ export default async function DealerDashboardContent() {
             <table className="custom-table">
               <thead>
                 <tr>
+                  <th>Sipariş Kodu</th>
                   <th>Alıcı / Telefon</th>
                   <th>Konum / Şube</th>
                   <th>Sepet İçeriği (Türler & Adetler)</th>
@@ -172,6 +202,14 @@ export default async function DealerDashboardContent() {
                   return (
                     <tr key={order.id}>
                       <td style={{ fontWeight: 600 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--primary)' }}>
+                            {order.order_code || '-'}
+                          </span>
+                          {order.order_code && <CopyButton text={order.order_code} />}
+                        </div>
+                      </td>
+                      <td style={{ fontWeight: 600 }}>
                         <div>{order.receiver_name}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.25rem' }}>
                           <Phone size={12} /> {order.phone_number || '-'}
@@ -185,7 +223,7 @@ export default async function DealerDashboardContent() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                           {order.order_items?.map((item: any, idx: number) => (
                             <div key={idx} style={{ fontSize: '0.8rem' }}>
-                              • <span style={{ fontStyle: 'italic' }}>{item.species?.name || 'Bilinmeyen Tür'}</span> ({item.quantity} adet)
+                              • <span style={{ fontStyle: 'italic' }}>{item.species?.name || 'Bilinmeyen Tür'}</span> ({item.quantity} adet) - <span style={{ color: 'var(--text-muted)' }}>{Number(item.price_at_sale).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</span>
                             </div>
                           )) || <span style={{ color: 'var(--text-muted)' }}>Sepet Boş</span>}
                         </div>
@@ -253,6 +291,66 @@ export default async function DealerDashboardContent() {
                               <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600 }}>
                                 Kod: {order.cargo_code}
                               </span>
+                            </div>
+                          )}
+
+                          {/* Teslimat Durumu Bildirme (Sadece Kargolananlar İçin) */}
+                          {order.cargo_sent && (
+                            <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                              {order.delivery_status === 'delivered' ? (
+                                <span className="badge badge-success" style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', width: 'fit-content' }}>
+                                  🟢 Canlı Sağlıklı Teslim Edildi
+                                </span>
+                              ) : order.delivery_status === 'issue' ? (
+                                <span className="badge badge-danger" style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', width: 'fit-content' }}>
+                                  🔴 Sorun Bildirildi (Sorun Var)
+                                </span>
+                              ) : (
+                                <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.25rem' }}>
+                                  <form action={handleSetDeliveryStatus} style={{ display: 'inline' }}>
+                                    <input type="hidden" name="id" value={order.id} />
+                                    <input type="hidden" name="status" value="delivered" />
+                                    <button
+                                      type="submit"
+                                      className="btn btn-primary"
+                                      style={{
+                                        fontSize: '0.65rem',
+                                        padding: '0.25rem 0.4rem',
+                                        height: 'auto',
+                                        background: '#10b981',
+                                        borderColor: '#10b981',
+                                        color: '#ffffff',
+                                        fontWeight: 600,
+                                        borderRadius: '4px',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      Sağlıklı Teslim
+                                    </button>
+                                  </form>
+                                  <form action={handleSetDeliveryStatus} style={{ display: 'inline' }}>
+                                    <input type="hidden" name="id" value={order.id} />
+                                    <input type="hidden" name="status" value="issue" />
+                                    <button
+                                      type="submit"
+                                      className="btn btn-secondary"
+                                      style={{
+                                        fontSize: '0.65rem',
+                                        padding: '0.25rem 0.4rem',
+                                        height: 'auto',
+                                        background: '#ef4444',
+                                        borderColor: '#ef4444',
+                                        color: '#ffffff',
+                                        fontWeight: 600,
+                                        borderRadius: '4px',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      Sorun Var
+                                    </button>
+                                  </form>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>

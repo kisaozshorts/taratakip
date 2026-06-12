@@ -5,6 +5,7 @@ import { DollarSign, ShoppingBag, CreditCard, Truck, Filter, Check, RefreshCw, P
 import { revalidatePath } from 'next/cache'
 import DeleteButton from '@/components/DeleteButton'
 import { Logger } from '@/utils/logger'
+import CopyButton from '@/components/CopyButton'
 
 interface SearchParams {
   dealer?: string
@@ -55,7 +56,7 @@ export default async function AdminDashboardContent({
   const [dealersRes, speciesListRes, allOrdersRes, ordersRes] = await Promise.all([
     supabase.from('profiles').select('id, username').eq('role', 'dealer'),
     supabase.from('species').select('id, name'),
-    supabase.from('orders').select('*, order_items(*)'),
+    supabase.from('orders').select('*, order_items(*), profiles:dealer_id(username)'),
     query
   ])
 
@@ -201,6 +202,7 @@ export default async function AdminDashboardContent({
             <table className="custom-table">
               <thead>
                 <tr>
+                  <th>Sipariş Kodu</th>
                   <th>Bayi</th>
                   <th>Alıcı / Telefon</th>
                   <th>Sepet İçeriği</th>
@@ -220,6 +222,14 @@ export default async function AdminDashboardContent({
                   
                   return (
                     <tr key={order.id} style={{ background: 'rgba(245, 158, 11, 0.03)' }}>
+                      <td style={{ fontWeight: 600 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--primary)' }}>
+                            {order.order_code || '-'}
+                          </span>
+                          {order.order_code && <CopyButton text={order.order_code} />}
+                        </div>
+                      </td>
                       <td style={{ color: 'var(--primary)', fontWeight: 600 }}>@{dealerName}</td>
                       <td style={{ fontWeight: 600 }}>
                         <div>{order.receiver_name}</div>
@@ -325,7 +335,6 @@ export default async function AdminDashboardContent({
           </div>
         </form>
       </div>
-
       {/* Sipariş Tablosu */}
       <div className="glass-card">
         <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '1.5rem' }}>Detaylı Sipariş İzleme</h2>
@@ -335,8 +344,10 @@ export default async function AdminDashboardContent({
             <table className="custom-table">
               <thead>
                 <tr>
+                  <th>Sipariş Kodu</th>
                   <th>Bayi</th>
                   <th>Alıcı / Telefon</th>
+                  <th>Konum / Şube</th>
                   <th>Sepet İçeriği</th>
                   <th>Toplam Tutar</th>
                   <th style={{ textAlign: 'center' }}>Müşteri Tipi</th>
@@ -354,12 +365,24 @@ export default async function AdminDashboardContent({
                   
                   return (
                     <tr key={order.id}>
+                      <td style={{ fontWeight: 600 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--primary)' }}>
+                            {order.order_code || '-'}
+                          </span>
+                          {order.order_code && <CopyButton text={order.order_code} />}
+                        </div>
+                      </td>
                       <td style={{ color: 'var(--primary)', fontWeight: 500 }}>@{dealerName}</td>
                       <td style={{ fontWeight: 600 }}>
                         <div>{order.receiver_name}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.25rem' }}>
                           <Phone size={12} /> {order.phone_number || '-'}
                         </div>
+                      </td>
+                      <td>
+                        <div style={{ fontSize: '0.85rem' }}>{order.city} / {order.district}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{order.cargo_branch}</div>
                       </td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -400,8 +423,21 @@ export default async function AdminDashboardContent({
                                 {(order as any).shipping_companies?.name || '-'}
                               </span>
                               <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 600 }}>
-                                {order.cargo_code}
+                                Kod: {order.cargo_code}
                               </span>
+                            </div>
+                          )}
+                          {order.cargo_sent && order.delivery_status && (
+                            <div style={{ marginTop: '0.25rem' }}>
+                              {order.delivery_status === 'delivered' ? (
+                                <span className="badge badge-success" style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                                  🟢 Canlı Sağlıklı Teslim Edildi
+                                </span>
+                              ) : (
+                                <span className="badge badge-danger" style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                                  🔴 Sorun Bildirildi
+                                </span>
+                              )}
                             </div>
                           )}
                         </div>
